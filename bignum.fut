@@ -51,12 +51,12 @@ module type arith = {
 
   val zero: t
   val one: t
-  val add: t -> t -> t
-  val sub: t -> t -> t
-  val mul: t -> t -> t
+  val +: t -> t -> t
+  val -: t -> t -> t
+  val *: t -> t -> t
   val from_u8: u8 -> t
 
-  val equal: t -> t -> bool
+  val ==: t -> t -> bool
 }
 
 module big (M: bigtype): arith = {
@@ -64,18 +64,16 @@ module big (M: bigtype): arith = {
   let zero: t = map (\_ -> M.t_zero) (iota M.size) -- e.g. [0, 0, 0, 0]
   let one: t = map (\x -> if x == 0 then M.t_one else M.t_zero) (iota M.size) -- e.g. [1, 0, 0, 0]
 
-  let equal (a: t) (b: t): bool =
-    let res = loop (acc, i) = (true, 0) while (acc && (i < (length a))) do (M.t_equal a[i] b[i], i + 1) in
-    res.1
+  let (a: t) == (b: t) : bool = and (map (uncurry M.t_equal) (zip a b))
 
-  let add a b: t =
+  let (a: t) + (b: t) =
     -- res is [(value, carry), ...]
     let res = scan (\acc p -> M.add_c p.1 p.2 acc.2) (M.t_zero, M.t_zero) (zip a b) in
     map (.1) res
   -- FIXME: Detect/handle overflow.
 
-  let sub _a _b: t = copy zero -- FIXME: implement
-  let mul _a _b: t = copy zero -- FIXME: implement
+  let (_a: t) -  (_b: t) : t = copy zero -- FIXME: implement
+  let (_a: t)* (_b: t) : t = copy zero -- FIXME: implement
   let from_u8 _x: t = copy zero -- FIXME: implement
 }
 
@@ -93,9 +91,9 @@ let u64_from_string (s: *[]u8): u64 =
   let parse_digit c = u64.u8 (c - '0') in
   reduce reducer 0 (map parse_digit s)
 
-module XXX(A: arith) = {
+module Stringable(A: arith) = {
   let from_string (s: *[]u8): A.t =
-    let reducer acc d = A.add (A.mul acc (A.from_u8 10)) d in
+    let reducer acc d = (acc A.+ (A.from_u8 10)) A.+ d in
     let parse_digit c: A.t = A.from_u8 (c - '0') in
     reduce reducer A.zero (map parse_digit s)
 }
@@ -104,14 +102,13 @@ module a64 = {
   type t = u64
   let zero: t = 0
   let one: t = 1
-  let add: t -> t -> t = (+)
-  let sub: t -> t -> t = (-)
-  let mul: t -> t -> t = (*)
+  let (a: t) + (b: t) : t = a + b
+  let (a: t) - (b: t) : t = a - b
+  let (a: t) * (b: t) : t = a * b
   let from_u8 x: t = u64.u8 x
-  let equal: t -> t -> bool = (==)
+  let (a: t) == (b: t) : bool = a == b
 }
 
-module x64 = XXX(a64)
+module s64 = Stringable(a64)
 
-let n = x64.from_string("123")
-
+let n = s64.from_string("123")
