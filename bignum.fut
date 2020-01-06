@@ -93,7 +93,7 @@ let u64_from_string (s: *[]u8): u64 =
 
 module Stringable(A: arith) = {
   let from_string (s: *[]u8): A.t =
-    let reducer acc d = (acc A.+ (A.from_u8 10)) A.+ d in
+    let reducer acc d = (acc A.* (A.from_u8 10)) A.+ d in
     let parse_digit c: A.t = A.from_u8 (c - '0') in
     reduce reducer A.zero (map parse_digit s)
 }
