@@ -85,17 +85,18 @@ module b256: arith = big b256_
 
 type string = *[]u8
 
+
 -- Prototype to abstract.
 let u64_from_string (s: *[]u8): u64 =
-  let reducer acc d = acc * 10 + d in
   let parse_digit c = u64.u8 (c - '0') in
-  reduce reducer 0 (map parse_digit s)
+  -- Don't use reduce, since, the reduction isn't associative.
+  loop acc = 0 for c in s do acc * 10 + parse_digit c
 
 module Stringable(A: arith) = {
   let from_string (s: *[]u8): A.t =
-    let reducer acc d = (acc A.* (A.from_u8 10)) A.+ d in
     let parse_digit c: A.t = A.from_u8 (c - '0') in
-    reduce reducer A.zero (map parse_digit s)
+    let ten = (A.from_u8 10) in
+    loop acc = A.zero for c in s do acc A.* ten A.+ (parse_digit c)
 }
 
 module a64 = {
