@@ -18,6 +18,7 @@ module type bigtype = {
   val mul_c: t -> t -> (t, t)
 
   val t_equal: t -> t -> bool
+  val t_gte: t -> t -> bool
 }
 
 module make_big (T: integral) (W: integral) (P: big_params): bigtype = {
@@ -44,8 +45,10 @@ module make_big (T: integral) (W: integral) (P: big_params): bigtype = {
     (narrow raw, narrow (raw W.>> W.i32 t_bits))
 
   let t_equal (a: t) (b: t): bool = a T.== b
+  let t_gte (a: t) (b: t): bool = a T.>= b
 }
 
+-- In a perfect eventual world, this would include the integral module entirely.
 module type arith = {
   type t
 
@@ -57,6 +60,7 @@ module type arith = {
   val from_u8: u8 -> t
 
   val ==: t -> t -> bool
+  val >=: t -> t -> bool
 }
 
 module big (M: bigtype): arith = {
@@ -65,6 +69,11 @@ module big (M: bigtype): arith = {
   let one: t = map (\x -> if x == 0 then M.t_one else M.t_zero) (iota M.size) -- e.g. [1, 0, 0, 0]
 
   let (a: t) == (b: t) : bool = and (map (uncurry M.t_equal) (zip a b))
+
+  let (a: t) >= (b: t) : bool =
+    let res = loop (acc, i) = (true, M.size - 1) while acc && (i >= 0) do
+                if M.t_gte a[i] b[i] then (true, i - 1) else (false, 0) in
+    res.1
 
   let (a: t) + (b: t) =
     -- res is [(value, carry), ...]
@@ -108,6 +117,7 @@ module a64 = {
   let (a: t) * (b: t) : t = a * b
   let from_u8 x: t = u64.u8 x
   let (a: t) == (b: t) : bool = a == b
+  let (a: t) >= (b: t) : bool = a >= b
 }
 
 module s64 = Stringable(a64)
@@ -127,8 +137,17 @@ entry s64_from_string (s: string) : u64 = s64.from_string s
 
 -- Test b32
 -- ==
--- entry: b32_test
+-- entry: b32_test_equal
 -- input { } output { true }
+
+-- Test b32_gte
+-- ==
+-- entry: b32_test_gte
+-- input { } output { true }
+
 open b32
-entry b32_test =
-  one + zero == one 
+entry b32_test_equal =
+  one + zero == one
+
+entry b32_test_gte =
+  (one >= one) && (one >= zero) && !(zero >= one)
