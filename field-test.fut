@@ -1,4 +1,4 @@
-import "bignum"
+import "field"
 -- Test Stringable
 -- ==
 -- entry: s64_from_string

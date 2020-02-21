@@ -1,51 +1,41 @@
-module type big_params = {
+module type field_params = {
   val size : i32  -- Number of limbs
 }
 
-module type bigtype = {
+module type fieldtype = {
   type t
-  type wide
 
   val size: i32 -- Number of limbs
   val t_bits: i32
   val t_zero: t
   val t_one: t
-
-  val widen: t -> wide
-  val narrow: wide -> t
-
-  val add_c: t -> t -> t -> (t, t)
-  val mul_c: t -> t -> (t, t)
+  val t_highest: t
 
   val t_equal: t -> t -> bool
+  val t_gt: t -> t -> bool
   val t_gte: t -> t -> bool
+  val t_lt: t -> t -> bool
+  val t_lte: t -> t -> bool
+  val t_add: t -> t -> t
+  val t_sub: t -> t -> t
 }
 
-module make_big (T: integral) (W: integral) (P: big_params): bigtype = {
+module make_field (T: integral) (P: field_params): fieldtype = {
   type t = T.t
-  type wide = W.t
 
   let size = P.size
   let t_bits = T.num_bits
   let t_zero = T.highest T.- T.highest
   let t_one = T.highest T./ T.highest
-
-  let widen (x: t): wide = W.i64 (T.to_i64 x)
-  let narrow (x: wide): t = T.i64 (W.to_i64 x)
-
-  -- Add three values of type t and return (sum, carry).
-  let add_c (a: t) (b: t) (c: t): (t, t) =
-    let raw = (widen a) W.+ (widen b) W.+ (widen c) in
-    -- Carry bit is either 1 or 0, so this can perhaps be done more cheaply.
-    (narrow raw, narrow (raw W.>> W.i32 t_bits))
-
-  -- Multiply two values of type t and return (product, carry).
-  let mul_c (a: t) (b: t): (t, t) =
-    let raw = (widen a) W.* (widen b) in
-    (narrow raw, narrow (raw W.>> W.i32 t_bits))
+  let t_highest = T.highest
 
   let t_equal (a: t) (b: t): bool = a T.== b
+  let t_gt (a: t) (b: t): bool = a T.> b
   let t_gte (a: t) (b: t): bool = a T.>= b
+  let t_lt (a: t) (b: t): bool = a T.< b
+  let t_lte (a: t) (b: t): bool = a T.<= b
+  let t_add (a: t) (b: t): t = a T.+ b
+  let t_sub (a: t) (b: t): t = a T.- b
 }
 
 -- In a perfect eventual world, this would include the integral module entirely.
@@ -54,6 +44,11 @@ module type arith = {
 
   val zero: t
   val one: t
+  val x: t
+  val xx: t
+  val xxx: t
+  val xxxx: t
+
   val +: t -> t -> t
   val -: t -> t -> t
   val *: t -> t -> t
@@ -63,10 +58,14 @@ module type arith = {
   val >=: t -> t -> bool
 }
 
-module big (M: bigtype): arith = {
+module big (M: fieldtype): arith = {
   type t = [M.size]M.t
   let zero: t = map (\_ -> M.t_zero) (iota M.size) -- e.g. [0, 0, 0, 0]
   let one: t = map (\x -> if x == 0 then M.t_one else M.t_zero) (iota M.size) -- e.g. [1, 0, 0, 0]
+  let x: t = map (\x -> if x < 1 then M.t_highest else M.t_zero) (iota M.size) -- e.g. [-1, 0, 0, 0]
+  let xx: t = map (\x -> if x < 2 then M.t_highest else M.t_zero) (iota M.size) -- e.g. [-1, 0, 0, 0]
+  let xxx: t = map (\x -> if x < 3 then M.t_highest else M.t_zero) (iota M.size) -- e.g. [-1, 0, 0, 0]
+  let xxxx: t = map (\x -> if x < 4 then M.t_highest else M.t_zero) (iota M.size) -- e.g. [-1, 0, 0, 0]
 
   let (a: t) == (b: t) : bool = and (map (uncurry M.t_equal) (zip a b))
 
@@ -76,20 +75,39 @@ module big (M: bigtype): arith = {
     res.1
 
   let (a: t) + (b: t) =
-    -- res is [(value, carry), ...]
-    let res = scan (\acc p -> M.add_c p.1 p.2 acc.2) (M.t_zero, M.t_zero) (zip a b) in
-    map (.1) res
-  -- FIXME: Detect/handle overflow.
+    let (_, r) = loop (carry, r) = (M.t_zero, []) for i < M.size do
+      let old = a[i] in
+      let tmp = M.t_add a[i] (M.t_add b[i] carry) in
+      let carry =
+        if (M.t_gt carry M.t_zero) then
+        if (M.t_gte old tmp) then M.t_one else M.t_zero
+        else
+        if M.t_gt old tmp then M.t_one else M.t_zero
+      in
+      (carry, r ++ [tmp]) in
+    r
 
-  let (_a: t) -  (_b: t) : t = copy zero -- FIXME: implement
+  let (a: t) -  (b: t) : t =
+    let (_, r) = loop (borrow, r) = (M.t_zero, []) for i < M.size do
+      let old = a[i] in
+      let tmp = M.t_sub a[i] (M.t_add b[i] borrow) in
+      let borrow =
+        if (M.t_gt borrow M.t_zero) then
+        if (M.t_lte old tmp) then M.t_one else M.t_zero
+        else
+        if M.t_lt old tmp then M.t_one else M.t_zero
+      in
+      (borrow, r ++ [tmp]) in
+    r
+
   let (_a: t)* (_b: t) : t = copy zero -- FIXME: implement
   let from_u8 _x: t = copy zero -- FIXME: implement
 }
 
-module b32_: bigtype = make_big u8 u16 { let size: i32 = 4}
+module b32_: fieldtype = make_field u8 { let size: i32 = 4}
 module b32: arith = big b32_
 
-module b256_: bigtype = (make_big u32 u64 { let size: i32 = 8})
+module b256_: fieldtype = (make_field u64 { let size: i32 = 4})
 module b256: arith = big b256_
 
 type string = *[]u8
@@ -112,6 +130,11 @@ module a64 = {
   type t = u64
   let zero: t = 0
   let one: t = 1
+  let x: t = u64.highest
+  let xx: t = u64.highest
+  let xxx: t = u64.highest
+  let xxxx: t = u64.highest
+  
   let (a: t) + (b: t) : t = a + b
   let (a: t) - (b: t) : t = a - b
   let (a: t) * (b: t) : t = a * b
