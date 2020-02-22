@@ -17,6 +17,7 @@ module type fieldtype = {
   val t_lt: t -> t -> bool
   val t_lte: t -> t -> bool
   val t_add: t -> t -> t
+  val t_mul: t -> t -> t
   val t_sub: t -> t -> t
   val t_from_u8: u8 -> t
 }
@@ -37,6 +38,7 @@ module make_field (T: integral) (P: field_params): fieldtype = {
   let t_lte (a: t) (b: t): bool = a T.<= b
   let t_add (a: t) (b: t): t = a T.+ b
   let t_sub (a: t) (b: t): t = a T.- b
+  let t_mul (a: t) (b: t): t = a T.* b
   let t_from_u8 (n: u8): t = T.u8 n
 }
 
@@ -113,6 +115,23 @@ module big_field (M: fieldtype): field = {
 
   let (_a: t)* (_b: t) : t = copy zero -- FIXME: implement
   let from_u8 (n: u8): t = fill (M.t_from_u8 n) 1
+
+
+  let mul_hi (a: M.t) (_b: M.t): M.t =
+    a -- FIXME
+
+  let mad_hi (a: M.t) (_b: M.t) (_c: M.t): M.t =
+    a -- FIXME
+
+
+  let mac_with_carry (a: M.t) (b: M.t) (c: M.t) (d: M.t): M.t =
+    let lo = M.t_mul a (M.t_add b c) in
+    let hi = mad_hi a b (if (M.t_lt lo c) then M.t_one else M.t_zero) in
+    let a = lo in
+    let lo = M.t_add lo d in
+    let hi = M.t_add hi (if (M.t_lt lo a) then M.t_one else M.t_zero) in
+    let d = hi in
+    lo
 
   let from_string (s: *[]u8): t =
     let parse_digit (c: u8): t = from_u8 (c u8.- '0') in
