@@ -1,13 +1,13 @@
 import "field"
 -- Test Stringable
 -- ==
--- entry: s64_from_string
+-- entry: u64_from_string
 -- input { [49u8, 50u8, 51u8] } output { 123u64 }
 -- input { [48u8] } output { 0u64 }
 
 -- Inputs = "123" and "0", `futhark test` doesn't parse strings, it seems.
 
-entry s64_from_string (s: string) : u64 = s64.from_string s
+entry u64_from_string (s: *[]u8) : u64 = u64_from_string s
 
 -- Test b32
 -- ==

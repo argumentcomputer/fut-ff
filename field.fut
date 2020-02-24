@@ -42,6 +42,8 @@ module make_field (T: integral) (P: field_params): fieldtype = {
   let t_from_u8 (n: u8): t = T.u8 n
 }
 
+type^ field_core 't = ((u8->t), t, t->t->t, t->t->t)
+
 -- In a perfect eventual world, this would include the integral module entirely.
 module type field = {
   type t
@@ -63,7 +65,9 @@ module type field = {
   val >=: t -> t -> bool
 
   val from_u8: u8 -> t
-  val from_string: (s: *[]u8) -> t
+--  val from_string: *[]u8 -> t
+--  val core: ((u8->t), t, t->t->t, t->t->t)
+  val core : field_core t
 }
 
 module big_field (M: fieldtype): field = {
@@ -85,7 +89,7 @@ module big_field (M: fieldtype): field = {
   let (a: t) >= (b: t) : bool =
     let res = loop (acc, i) = (true, M.size - 1) while acc && (i >= 0) do
                 if M.t_gte a[i] b[i] then (true, i - 1) else (false, 0) in
-    res.1
+    res.0
 
   let (a: t) + (b: t) =
     let (_, r) = loop (carry, r) = (M.t_zero, []) for i < M.size do
@@ -137,15 +141,25 @@ module big_field (M: fieldtype): field = {
     let parse_digit (c: u8): t = from_u8 (c u8.- '0') in
     let ten = (from_u8 10) in
     loop acc = zero for c in s do acc * ten + (parse_digit c)
+
+  let core = (from_u8, zero, (*), (+))
 }
+
+-- This is conceptually a function of the field module, but the anonymous size parameter (s)
+-- leads to compile errors in the module type. So use just the vals we need, encapsulated as field_core.
+let from_string 'a (core: field_core a) (s: *[]u8): a =
+  let (from_u8, zero, mul, add) = core in
+  let ten = (from_u8 10) in
+  let parse_digit (c: u8): a = from_u8 (c u8.- '0') in
+  loop acc = zero for c in s do add (mul acc ten) (parse_digit c)
 
 module b32_: fieldtype = make_field u8 { let size: i32 = 4}
 module b32: field = big_field b32_
+let b32_from_string = from_string b32.core
 
 module b256_: fieldtype = (make_field u64 { let size: i32 = 4})
 module b256: field = big_field b256_
-
-type string = *[]u8
+let b25_from_string = from_string b256.core
 
 
 -- Prototype to abstract.
@@ -184,4 +198,4 @@ let u64_from_string (s: *[]u8): u64 =
 -- module s64 = Stringable(a64)
 -- module s32 = Stringable(b32)
 
-let n = b32.from_string("123")
+--let n = b32.from_string("123")
