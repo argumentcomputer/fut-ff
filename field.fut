@@ -82,16 +82,13 @@ module type field = {
 
   val zero: t
   val one: t
-  val x: t
-  val xx: t
-  val xxx: t
   val highest: t
   val fill: s -> i32 -> t
 
 
   -- Normal operations
-  val add: t -> t -> t
-  val sub: t -> t -> t
+  val add: *t -> t -> t
+  val sub: *t -> t -> t
 
   val ==: t -> t -> bool
   val >=: t -> t -> bool
@@ -99,14 +96,16 @@ module type field = {
   val <=: t -> t -> bool
   val <: t -> t -> bool
 
-  val big_mul: t -> t -> double_t
+  val big_mul: *t -> t -> double_t
 
   -- Field operations
   val +: t -> t -> t
   val -: t -> t -> t
   val *: t -> t -> t
 
+  val to_mont: t -> t
   val mont_reduce: *double_t -> t
+  val mont_field_mul: t -> t -> t
   val final_reduce: t -> t
 
   val double: t -> t
@@ -115,6 +114,7 @@ module type field = {
   val pow_lookup: t -> i32 -> t
 
   val from_u8: u8 -> t
+  val mont_u8: u8 -> t
   val core : field_core t s
 
   val mac_with_carry: s -> s -> s -> s -> (s, s)
@@ -135,13 +135,11 @@ module big_field (M: fieldtype): field = {
 
   let zero: t = map (\_ -> M.zero) (iota M.limbs) -- e.g. [0, 0, 0, 0]
   let one: t = map (\x -> if x == 0 then M.one else M.zero) (iota M.limbs) -- e.g. [1, 0, 0, 0]
-  let x: t = map (\x -> if x < 1 then M.highest else M.zero) (iota M.limbs) -- e.g. [-1, 0, 0, 0]
-  let xx: t = map (\x -> if x < 2 then M.highest else M.zero) (iota M.limbs) -- e.g. [-1, -1, 0, 0]
-  let xxx: t = map (\x -> if x < 3 then M.highest else M.zero) (iota M.limbs) -- e.g. [-1, -1, -1, 0]
   let highest: t = map (const M.highest) (iota M.limbs) -- e.g. [-1, -1, -1, -1]
 
   let dummy = M.(from_u8 251)
-  let FIELD_P = map (\x -> if x < 1 then dummy else M.zero) (iota M.limbs) -- FIXME
+--  let FIELD_P = map (\i -> if i < M.limbs then M.highest else M.zero) (iota M.limbs) -- FIXME
+  let FIELD_P = zero -- bignum case.
 
   let DOUBLE_FIELD_P: double_t =
     let fp = copy FIELD_P in
@@ -152,8 +150,7 @@ module big_field (M: fieldtype): field = {
                let inv = M.(inv * inv) in M.(inv * a))
     in M.(zero - inv)
 
-    -- FIXME: undummy
-  let FIELD_INV = calc_inv dummy --FIELD_P[0] 
+  let FIELD_INV = calc_inv FIELD_P[0] 
 
   let fill (v: s) (count: i32) : t = map (\x -> if x < count then v else M.zero) (iota M.limbs)
 
@@ -251,7 +248,7 @@ module big_field (M: fieldtype): field = {
                let box = [inner1[i + M.limbs]] in
                let (x, carry2) = add2_with_carry box[0] carry carry2 in
                (inner1 with [i + M.limbs] = x, carry2)  in
-    let result: t = map (\i -> outer[i + M.limbs]) (iota M.limbs) in
+    let result: *t = map (\i -> outer[i + M.limbs]) (iota M.limbs) in
     if result >= FIELD_P then
       sub result FIELD_P
     else result
@@ -262,10 +259,11 @@ module big_field (M: fieldtype): field = {
 
     -- Is double-width a in the field?
     let double_in_field (a: double_t): bool =
+      if FIELD_P == zero then true else
       all (\i -> M.(a[i i32.+ limbs] == zero)) (iota M.limbs) &&
        let res = loop (acc, i) = (true, M.limbs - 1) while acc && (i i32.>= 0) do
                  if M.(a[i] < FIELD_P[i]) then (true, i - 1) else (false, 0) in
-     res.0
+       res.0
 
   let simple_reduce (to_reduce: double_t): t =
     let dfp = (copy DOUBLE_FIELD_P) in
@@ -273,17 +271,21 @@ module big_field (M: fieldtype): field = {
       double_sub to_reduce dfp in
     map (\i -> in_field[i]) (iota M.limbs)
 
-  let big_mul (a: []M.t) (b: t): double_t =
+  let big_mul (a: []M.t) (b: t): []M.t =
     let (res: *double_t) = map (const M.zero) (iota M.double_limbs) in
-    let outer =
-      loop (outer) = res for i < M.limbs do
+    let (outer, _) =
+      loop (outer, i) = (res, 0) while i i32.< M.limbs do
       let (inner, carry) =
         (loop (inner, carry) = (outer, M.zero) for j < M.limbs do
          let box = inner[i + j] in
          let (sum, carry) = mac_with_carry a[i] b[j] (copy box) carry in
          (inner with [i + j] = sum, carry)) in
-      inner with [i + M.limbs] = carry in
+      (inner with [i + M.limbs] = carry, i i32.+ 1) in
     outer
+
+  let R_MOD_P = let z: *t = (copy zero) in sub z FIELD_P
+  let to_mont(v: t): t =
+    simple_reduce (big_mul (copy R_MOD_P) v)
 
   let simple_field_mul  (a: t) (b: t) : t =
     simple_reduce (big_mul a b)
@@ -291,15 +293,18 @@ module big_field (M: fieldtype): field = {
   let mont_field_mul  (a: t) (b: t) : t =
     mont_reduce (big_mul a b)
 
+
   let (a: t) * (b: t) : t =
-    mont_field_mul a b
+    simple_field_mul a b
 
   let (a: t) - (b: t): t =
+    let old = copy a in
     let res = sub a b in
-    if a >= b then res else add res (copy FIELD_P)
+    if old >= b then res else add res (copy FIELD_P)
 
   let (a: t) + (b: t): t =
     let res = add a b in
+    if FIELD_P == zero then res else -- special case for simple bignum (make own module?)
     let fp = (copy FIELD_P) in
     if res >= fp then sub res fp else res
 
@@ -336,36 +341,34 @@ module big_field (M: fieldtype): field = {
   let pow_lookup (_base: t) (_exp: i32): t = assert false (copy zero) -- FIXME: implement
 
   let from_u8 (n: u8): t = fill (M.from_u8 n) 1
+  let mont_u8 (n: u8): t = to_mont (from_u8 n)
   let s_from_u8 (n: u8): s = M.from_u8 n
 
-  -- let from_string (s: *[]u8): t =
-  --   let parse_digit (c: u8): t = from_u8 (c u8.- '0') in
-  --   let ten = (from_u8 10) in
-  --   loop acc = zero for c in s do acc * (add ten (parse_digit c))
-
-  let core = (from_u8, zero, (*), (+), s_from_u8)
+  let core: field_core t s = (from_u8, zero, (*), (+), s_from_u8)
 }
 
 -- This is conceptually a function of the field module, but the anonymous limbs parameter (s)
 -- leads to compile errors in the module type. So use just the vals we need, encapsulated as field_core.
-let from_string 'a 'b (core: field_core a b) (s: *[]u8): a =
+let from_string 't 's (core: field_core t s) (str: *[]u8): t =
   let (from_u8, zero, mul, add, _) = core in
   let ten = (from_u8 10) in
-  let parse_digit (c: u8): a = from_u8 (c u8.- '0') in
-  loop acc = zero for c in s do add (mul acc ten) (parse_digit c)
+  let parse_digit (c: u8): t = from_u8 (c u8.- '0') in
+  loop acc = zero for c in str do add (mul acc ten) (parse_digit c)
 
-module b32_: fieldtype = make_field u8 { let limbs: i32 = 4}
-module b32: field = big_field b32_
-let b32_from_string = from_string b32.core
+module b32: field = big_field (make_field u8 { let limbs: i32 = 4})
+let b32_from_string (s: *[]u8) = from_string b32.core s
 
-module b256_: fieldtype = (make_field u64 { let limbs: i32 = 4})
-module b256: field = big_field b256_
+module b24: field = big_field (make_field u8 { let limbs: i32 = 3})
+let b24_from_string (s: *[]u8) = from_string b24.core s
+
+module b256: field = big_field (make_field u64 { let limbs: i32 = 4})
 let b256_from_string = from_string b256.core
 
-
-module b8_: fieldtype = make_field u8 { let limbs: i32 = 1}
-module b8: field = big_field b8_
+module b8: field = big_field (make_field u8 { let limbs: i32 = 1})
 let b8_from_string = from_string b8.core
+
+module b16: field = big_field (make_field u8 { let limbs: i32 = 2})
+let b16_from_string = from_string b16.core
 
 
 -- Prototype to abstract.
