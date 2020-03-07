@@ -1,5 +1,6 @@
 module type field_params = {
   val limbs : i32  -- Number of limbs
+  val p [n]: [n]u8 -- Size of prime field
 }
 
 module type fieldtype = {
@@ -11,6 +12,7 @@ module type fieldtype = {
   val zero: t
   val one: t
   val highest: t
+  val p_str [n]: [n]u8
 
   val equal: t -> t -> bool
   val gt: t -> t -> bool
@@ -47,6 +49,7 @@ module make_field (T: integral) (P: field_params): fieldtype = {
   let zero = T.highest T.- T.highest
   let one = T.highest T./ T.highest
   let highest = T.highest
+  let p_str = P.p
 
   let equal (a: t) (b: t): bool = a T.== b
   let gt (a: t) (b: t): bool = a T.> b
@@ -115,7 +118,6 @@ module type field = {
 
   val from_u8: u8 -> t
   val mont_u8: u8 -> t
-  val core : field_core t s
 
   val mac_with_carry: s -> s -> s -> s -> (s, s)
   val mac_with_carry8: u8 -> u8 -> u8 -> u8 -> (s, s)
@@ -145,27 +147,16 @@ module big_field (M: fieldtype): field = {
 
   let limbs_are_unsigned = assert (M.lt M.zero (M.sub M.zero M.one)) true
 
-  let zero: t = map (\_ -> M.zero) (iota LIMBS) -- e.g. [0, 0, 0, 0]
-  let one: t = map (\x -> if x == 0 then M.one else M.zero) (iota LIMBS) -- e.g. [1, 0, 0, 0]
+  let zero: t = map (\_ -> M.zero) (iota LIMBS)
+  let one: t = map (\x -> if x == 0 then M.one else M.zero) (iota LIMBS)
 
-  let highest: t = map (const M.highest) (iota LIMBS) -- e.g. [-1, -1, -1, -1]
-
-  let dummy = M.(from_u8 251)
---  let FIELD_P = map (\i -> if i < LIMBS then M.highest else M.zero) (iota LIMBS) -- FIXME
-  let FIELD_P = zero -- bignum case.
-
-  let DOUBLE_FIELD_P: double_t =
-    let fp = copy FIELD_P in
-    map (\i -> if i < LIMBS then fp[i] else M.zero) (iota DOUBLE_LIMBS)
-
-  let calc_inv (a: s): s =
-    let inv = (loop inv = M.one for _i < M.num_bits do
-               let inv = M.(inv * inv) in M.(inv * a))
-    in M.(zero - inv)
-
-  let FIELD_INV = calc_inv FIELD_P[0]
-
+  let highest: t = map (const M.highest) (iota LIMBS)
   let fill (v: s) (count: i32) : t = map (\x -> if x < count then v else M.zero) (iota LIMBS)
+
+  let double_highest: double_t = map (\i -> if i < LIMBS then M.highest else M.zero) (iota DOUBLE_LIMBS)
+
+  -- Do this before redefining ==.
+  let no_p_str = M.p_str == ""
 
   let (a: t) == (b: t) : bool = and (map (uncurry M.equal) (zip a b))
 
@@ -248,6 +239,66 @@ module big_field (M: fieldtype): field = {
     let c = hi in
     (lo, c)
 
+    -- Is double-width a in the field?
+    let double_in_field (a: double_t) (f: t): bool =
+      all (\i -> M.(a[i i32.+ limbs] == zero)) (iota LIMBS) &&
+      if f == zero then true else
+      let res = loop (acc, i) = (true, LIMBS - 1) while acc && (i i32.>= 0) do
+                  if M.(a[i] < f[i]) then (true, i - 1) else (false, 0) in
+      res.0
+
+
+  -- So we can read the initial FIELD_P value from a string.
+  let naive_reduce (to_reduce: double_t): t =
+    let in_field = loop to_reduce = to_reduce while !(double_in_field to_reduce zero) do
+      double_sub to_reduce (copy double_highest) in
+    map (\i -> in_field[i]) (iota LIMBS)
+
+  let big_mul (a: []M.t) (b: t): []M.t =
+    let (res: *double_t) = map (const M.zero) (iota DOUBLE_LIMBS) in
+    let (outer, _) =
+      loop (outer, i) = (res, 0) while i i32.< LIMBS do
+      let (inner, carry) =
+        (loop (inner, carry) = (outer, M.zero) for j < LIMBS do
+         let box = inner[i + j] in
+         let (sum, carry) = mac_with_carry a[i] b[j] (copy box) carry in
+         (inner with [i + j] = sum, carry)) in
+      (inner with [i + LIMBS] = carry, i i32.+ 1) in
+    outer
+
+  let naive_mul  (a: t) (b: t) : t =
+    naive_reduce (big_mul a b)
+
+  let from_u8 (n: u8): t = fill (M.from_u8 n) 1
+  let ten = (from_u8 10)
+
+  let from_string [n] (str: [n]u8): t =
+    let parse_digit (c: u8): t = from_u8 u8.(c - '0') in
+    loop acc = zero for c in str do add (naive_mul acc (copy ten)) (parse_digit c)
+
+  -- zero means field is the size of the underlying bits.
+  let FIELD_P = if no_p_str then zero else from_string M.p_str
+
+  let DOUBLE_FIELD_P: double_t =
+    let fp = copy FIELD_P in
+    map (\i -> if i i32.< LIMBS then fp[i] else M.zero) (iota DOUBLE_LIMBS)
+
+  let calc_inv (a: s): s =
+    let inv = (loop inv = M.one for _i < M.num_bits do
+               let inv = M.(inv * inv) in M.(inv * a))
+    in M.(zero - inv)
+
+  let FIELD_INV = calc_inv FIELD_P[0]
+
+  let simple_reduce (to_reduce: double_t): t =
+    let dfp = (copy DOUBLE_FIELD_P) in
+    let in_field = loop to_reduce = to_reduce while !(double_in_field to_reduce DOUBLE_FIELD_P) do
+                     double_sub to_reduce dfp in
+    map (\i -> in_field[i]) (iota LIMBS)
+
+  let simple_field_mul  (a: t) (b: t) : t =
+    simple_reduce (big_mul a b)
+
   let mont_reduce (limbs: *double_t): t =
     let (FIELD_P, FIELD_INV) = (copy (FIELD_P, FIELD_INV)) in
     let carry2 = M.zero in
@@ -270,38 +321,9 @@ module big_field (M: fieldtype): field = {
     let double = map (\i -> if i i32.< LIMBS then v[i] else M.zero) (iota DOUBLE_LIMBS) in
     mont_reduce double
 
-    -- Is double-width a in the field?
-    let double_in_field (a: double_t): bool =
-      if FIELD_P == zero then true else
-      all (\i -> M.(a[i i32.+ limbs] == zero)) (iota LIMBS) &&
-       let res = loop (acc, i) = (true, LIMBS - 1) while acc && (i i32.>= 0) do
-                 if M.(a[i] < FIELD_P[i]) then (true, i - 1) else (false, 0) in
-       res.0
-
-  let simple_reduce (to_reduce: double_t): t =
-    let dfp = (copy DOUBLE_FIELD_P) in
-    let in_field = loop to_reduce = to_reduce while !(double_in_field to_reduce) do
-      double_sub to_reduce dfp in
-    map (\i -> in_field[i]) (iota LIMBS)
-
-  let big_mul (a: []M.t) (b: t): []M.t =
-    let (res: *double_t) = map (const M.zero) (iota DOUBLE_LIMBS) in
-    let (outer, _) =
-      loop (outer, i) = (res, 0) while i i32.< LIMBS do
-      let (inner, carry) =
-        (loop (inner, carry) = (outer, M.zero) for j < LIMBS do
-         let box = inner[i + j] in
-         let (sum, carry) = mac_with_carry a[i] b[j] (copy box) carry in
-         (inner with [i + j] = sum, carry)) in
-      (inner with [i + LIMBS] = carry, i i32.+ 1) in
-    outer
-
   let R_MOD_P = let z: *t = (copy zero) in sub z FIELD_P
   let to_mont(v: t): t =
     simple_reduce (big_mul (copy R_MOD_P) v)
-
-  let simple_field_mul  (a: t) (b: t) : t =
-    simple_reduce (big_mul a b)
 
   let mont_field_mul  (a: t) (b: t) : t =
     mont_reduce (big_mul a b)
@@ -353,25 +375,24 @@ module big_field (M: fieldtype): field = {
   let pow (_base: t) (_exp: i32): t = assert false (copy zero) -- FIXME: implement
   let pow_lookup (_base: t) (_exp: i32): t = assert false (copy zero) -- FIXME: implement
 
-  let from_u8 (n: u8): t = fill (M.from_u8 n) 1
   let mont_u8 (n: u8): t = to_mont (from_u8 n)
   let s_from_u8 (n: u8): s = M.from_u8 n
-
-  let ten = (from_u8 10)
-
-  let from_string [n] (str: [n]u8): t =
-    let parse_digit (c: u8): t = from_u8 u8.(c - '0') in
-    loop acc = zero for c in str do (acc * (copy ten)) + (parse_digit c)
-
-  let core: field_core t s = (from_u8, zero, (*), (+), s_from_u8)
 }
 
 let es_fn (s: *[]u8) (i: i32) =
   s[i]
 
-module b32: field = big_field (make_field u8 { let limbs: i32 = 4})
-module b64: field = big_field (make_field u16 { let limbs: i32 = 4})
-module b24: field = big_field (make_field u8 { let limbs: i32 = 3})
-module b256: field = big_field (make_field u64 { let limbs: i32 = 4})
-module b8: field = big_field (make_field u8 { let limbs: i32 = 1})
-module b16: field = big_field (make_field u8 { let limbs: i32 = 2})
+module b32: field = big_field (make_field u8 { let limbs: i32 = 4
+                                               let p = ""})
+module b64: field = big_field (make_field u16 { let limbs: i32 = 4
+                                                let p = ""})
+module b24: field = big_field (make_field u8 { let limbs: i32 = 3
+                                               let p = ""})
+module b256: field = big_field (make_field u64 { let limbs: i32 = 4
+                                                 let p = ""})
+module b8: field = big_field (make_field u8 { let limbs: i32 = 1
+                                              let p = ""})
+module b8': field = big_field (make_field u8 { let limbs: i32 = 1
+                                              let p = "251"})
+module b16: field = big_field (make_field u8 { let limbs: i32 = 2
+                                               let p = ""})
