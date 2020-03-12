@@ -1,17 +1,13 @@
 import "field"
--- Test b32
--- ==
--- entry: b32_test_equal
+-- Test bls12-381
+--
+-- entry: bls12_381_test_multiplication
+-- input { [1, 9] [1, 23] } output { [1, 207] }
+
+entry bls12_381_test_multiplication xs ys =
+  map2 bls12_381.(\a b -> final_reduce ((to_mont (from_u8 a)) * (to_mont (from_u8 b)))) xs ys
+
+-- entry: bls12_381_test_xxx
 -- input { } output { true }
 
--- Test b32_gte
--- ==
--- entry: b32_test_gte
--- input { } output { true }
-
-open b32
-entry b32_test_equal =
-  one + zero == one
-
-entry b32_test_gte =
-  (one >= one) && b32.(one >= zero) && !b32.(zero >= one)
+entry bls12_381_test_xxx = bls12_381.(final_reduce (to_mont (zero - one)) * (to_mont (zero - one)))
