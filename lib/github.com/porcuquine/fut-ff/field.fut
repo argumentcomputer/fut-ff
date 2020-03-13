@@ -10,6 +10,7 @@ module type field_params = {
 }
 
 module type fieldtype = {
+  module FT: integral
   type t
 
   val limbs: i32 -- number of limbs
@@ -36,6 +37,9 @@ module type fieldtype = {
   val mul: t -> t -> t
   val sub: t -> t -> t
   val from_u8: u8 -> t
+  val from_u16: u16 -> t
+  val from_u32: u32 -> t
+  val from_u64: u64 -> t
   val mad_hi: t -> t -> t -> t
 
   val +: t -> t -> t
@@ -53,7 +57,8 @@ module type fieldtype = {
   val |: t -> t -> t
 }
 
-module make_field (T: integral) (P: field_params): fieldtype = {
+module fieldtype (T: integral) (P: field_params): fieldtype = {
+  module FT = T
   type t = T.t
 
   let limbs = P.limbs
@@ -74,6 +79,9 @@ module make_field (T: integral) (P: field_params): fieldtype = {
   let sub (a: t) (b: t): t = a T.- b
   let mul (a: t) (b: t): t = a T.* b
   let from_u8 (n: u8): t = T.u8 n
+  let from_u16 (n: u16): t = T.u16 n
+  let from_u32 (n: u32): t = T.u32 n
+  let from_u64 (n: u64): t = T.u64 n
   let mad_hi (a: t) (b: t) (c: t): t = T.mad_hi a b c
 
   let (a: t) + (b: t) = a T.+ b
@@ -97,6 +105,8 @@ module type field = {
   type s -- limb type
   type es -- element string
   type double_t
+
+  module S: integral -- module for limb type
 
   val zero: t
   val one: t
@@ -127,6 +137,37 @@ module type field = {
   val mont_field_mul: t -> t -> t
   val final_reduce: t -> t
 
+  val double: t -> t
+  val square: t -> t
+  val pow: t -> i32 -> t
+  val pow_lookup: t -> i32 -> t
+
+  -- These from_ functions convert from the named integral type and populate the first limb.
+  -- If the value must be truncated, that will happen.
+  val from_u8: u8 -> t
+  val from_u16: u16 -> t
+  val from_u32: u32 -> t
+  val from_u64: u64 -> t
+
+  val s_from_u8: u8 -> s
+  val s_from_u16: u16 -> s
+  val s_from_u32: u32 -> s
+  val s_from_u64: u64 -> s
+
+  val mac_with_carry: s -> s -> s -> s -> (s, s)
+  val mac_with_carry8: u8 -> u8 -> u8 -> u8 -> (s, s)
+  val add_with_carry: s -> s -> (s, s)
+  val add2_with_carry: s -> s -> s -> (s, s)
+
+  val LIMBS: i32
+  val FIELD_P: t
+  val FIELD_R2: t
+  val FIELD_P_DIFF: t
+  val FIELD_INV: s
+
+  val from_string [n]: [n]u8 -> t
+  val make: (() -> []s) -> t
+
   -- Debugging
   val double_in_field: double_t -> t -> bool
   val double_sub: double_t -> double_t -> double_t
@@ -135,30 +176,12 @@ module type field = {
   val double_zero: double_t
   val DOUBLE_R: double_t
 
-  val double: t -> t
-  val square: t -> t
-  val pow: t -> i32 -> t
-  val pow_lookup: t -> i32 -> t
-
-  val from_u8: u8 -> t
-  val mont_u8: u8 -> t
-
-  val mac_with_carry: s -> s -> s -> s -> (s, s)
-  val mac_with_carry8: u8 -> u8 -> u8 -> u8 -> (s, s)
-  val add_with_carry: s -> s -> (s, s)
-  val add2_with_carry: s -> s -> s -> (s, s)
-
-  val FIELD_P: t
-  val FIELD_R2: t
-  val FIELD_P_DIFF: t
-  val FIELD_INV: s
-
-  val from_string [n]: [n]u8 -> t
 }
 
 module big_field (M: fieldtype): field = {
   let DOUBLE_LIMBS = 2 * M.limbs
   let LIMBS = M.limbs
+  module S = M.FT
 
   type t = [LIMBS]M.t
   type s = M.t
@@ -185,6 +208,9 @@ module big_field (M: fieldtype): field = {
 
   -- Do this before redefining ==.
   let no_p_str = length (M.p_str ()) == 0
+
+  -- Primality is unchecked, but distinguish between the bignum and prime field cases. (TODO: separate the modules).
+  let is_prime_field = assert (!no_p_str) true
 
   let (a: t) == (b: t) : bool = and (map (uncurry M.equal) (zip a b))
 
@@ -301,6 +327,9 @@ module big_field (M: fieldtype): field = {
     naive_reduce (big_mul a b)
 
   let from_u8 (n: u8): t = fill (M.from_u8 n) 1
+  let from_u16 (n: u16): t = fill (M.from_u16 n) 1
+  let from_u32 (n: u32): t = fill (M.from_u32 n) 1
+  let from_u64 (n: u64): t = fill (M.from_u64 n) 1
   let ten = (from_u8 10)
 
   -- FIXME: Don't expose this version. Only use for reading FIELD_P.
@@ -441,36 +470,43 @@ module big_field (M: fieldtype): field = {
 
   let mont_u8 (n: u8): t = to_mont (from_u8 n)
   let s_from_u8 (n: u8): s = M.from_u8 n
+  let s_from_u16 (n: u16): s = M.from_u16 n
+  let s_from_u32 (n: u32): s = M.from_u32 n
+  let s_from_u64 (n: u64): s = M.from_u64 n
+
+  let make (a: () -> []s): t = a () :> t
 }
 
-module b32: field = big_field (make_field u8 { let limbs = 4i32
-                                               let p () = ""
-                                               let r2 () = "" })
+-- Non-prime fields don't work with montgomery representation. TODO: support them separately.
 
-module b64: field = big_field (make_field u16 { let limbs = 4i32
-                                                let p () = ""
-                                                let r2 () = "" })
+-- module b32: field = big_field (fieldtype u8 { let limbs = 4i32
+--                                               let p () = ""
+--                                               let r2 () = "" })
 
-module b24: field = big_field (make_field u8 { let limbs = 3i32
-                                               let p () = ""
-                                               let r2 () = "" })
+-- module b64: field = big_field (fieldtype u16 { let limbs = 4i32
+--                                                let p () = ""
+--                                                let r2 () = "" })
 
-module b256: field = big_field (make_field u64 { let limbs = 4i32
-                                                 let p () = ""
-                                                 let r2 () = "" })
+-- module b24: field = big_field (fieldtype u8 { let limbs = 3i32
+--                                               let p () = ""
+--                                               let r2 () = "" })
 
-module b8: field = big_field (make_field u8 { let limbs = 1i32
-                                              let p () = ""
-                                              let r2 () = "" })
+-- module b256: field = big_field (fieldtype u64 { let limbs = 4i32
+--                                                 let p () = ""
+--                                                 let r2 () = "" })
 
-module b8': field = big_field (make_field u8 { let limbs = 1i32
-                                               let p () = "251"
-                                               let r2 () = "25" })
-module b16: field = big_field (make_field u8 { let limbs = 2i32
-                                               let p () = ""
-                                               let r2 () = "" })
+-- module b8: field = big_field (fieldtype u8 { let limbs = 1i32
+--                                              let p () = ""
+--                                              let r2 () = "" })
 
-module bls12_381: field = big_field (make_field u64 {
-                                                  let limbs = 4i32
-                                                  let p () = copy bls12_381_modulus
-                                                  let r2 () = copy r_squared_mod_p })
+module b8': field = big_field (fieldtype u8 { let limbs = 1i32
+                                              let p () = "251"
+                                              let r2 () = "25" })
+-- module b16: field = big_field (fieldtype u8 { let limbs = 2i32
+--                                               let p () = ""
+--                                               let r2 () = "" })
+
+module bls12_381: field = big_field (fieldtype u64 {
+                                                 let limbs = 4i32
+                                                 let p () = copy bls12_381_modulus
+                                                 let r2 () = copy r_squared_mod_p })
