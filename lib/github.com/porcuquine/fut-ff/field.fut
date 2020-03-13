@@ -1,13 +1,12 @@
-let P_STRING_SIZE: i32 = 100 -- This is a horrible hack, but it's the only way I can find to get this to work with size types.
-
-let pstr (s: *[]u8): [P_STRING_SIZE]u8 =
-  let l = length s in
-  map (\i -> if i < l then s[i] else ' ') (iota P_STRING_SIZE)
+-- https://github.com/filecoin-project/pairing/blob/master/src/bls12_381/fr.rs#L9
+-- #[PrimeFieldModulus = "52435875175126190479447740508185965837690552500527637822603658699938581184513"]
+let bls12_381_modulus  = "52435875175126190479447740508185965837690552500527637822603658699938581184513"
+let r_squared_mod_p = "3294906474794265442129797520630710739278575682199800681788903916070560242797"
 
 module type field_params = {
   val limbs : i32  -- Number of limbs
-  val p: [P_STRING_SIZE]u8 -- Size of prime field
-  val r2: [P_STRING_SIZE]u8 -- R^2 mod p
+  val p: () -> []u8 -- Size of prime field
+  val r2: () -> []u8 -- R^2 mod p
 }
 
 module type fieldtype = {
@@ -21,12 +20,12 @@ module type fieldtype = {
   val highest: t
 
   -- P, the prime field modulus.
-  val p_str: [P_STRING_SIZE]u8
+  val p_str: () -> []u8
 
   -- R^2 mod P
   -- It would be nice to be able to calculate this, but we need it in order to make multiplication in the field cheap.
   -- For now, we will settle for verifying it once montogmery multiplication reduction is bootstrapped. (see: field_r2_is_correct)
-  val r2_str: [P_STRING_SIZE]u8
+  val r2_str: () -> []u8
 
   val equal: t -> t -> bool
   val gt: t -> t -> bool
@@ -65,7 +64,7 @@ module make_field (T: integral) (P: field_params): fieldtype = {
   let highest = T.highest
   let p_str = P.p
   let r2_str = P.r2
-  
+
   let equal (a: t) (b: t): bool = a T.== b
   let gt (a: t) (b: t): bool = a T.> b
   let gte (a: t) (b: t): bool = a T.>= b
@@ -185,7 +184,7 @@ module big_field (M: fieldtype): field = {
   let double_highest: double_t = map (\i -> if i < LIMBS then M.highest else M.zero) (iota DOUBLE_LIMBS)
 
   -- Do this before redefining ==.
-  let no_p_str = M.p_str == pstr("")
+  let no_p_str = length (M.p_str ()) == 0
 
   let (a: t) == (b: t) : bool = and (map (uncurry M.equal) (zip a b))
 
@@ -314,8 +313,8 @@ module big_field (M: fieldtype): field = {
         add (naive_mul acc (copy ten)) (parse_digit c)
 
   -- zero means field is the size of the underlying bits.
-  let FIELD_P = if no_p_str then zero else from_string M.p_str
-  let FIELD_R2 = if no_p_str then zero else from_string M.r2_str
+  let FIELD_P = if no_p_str then zero else from_string (M.p_str ())
+  let FIELD_R2 = if no_p_str then zero else from_string (M.r2_str ())
 
   -- Could also do this by checking that the most-significant bit is 0.
   -- Is p less than half of the field size?
@@ -445,36 +444,33 @@ module big_field (M: fieldtype): field = {
 }
 
 module b32: field = big_field (make_field u8 { let limbs = 4i32
-                                               let p = pstr("")
-                                               let r2 = pstr("") })
+                                               let p () = ""
+                                               let r2 () = "" })
 
 module b64: field = big_field (make_field u16 { let limbs = 4i32
-                                                let p = pstr("")
-                                                let r2 = pstr("") })
+                                                let p () = ""
+                                                let r2 () = "" })
 
 module b24: field = big_field (make_field u8 { let limbs = 3i32
-                                               let p = pstr("")
-                                               let r2 = pstr("") })
+                                               let p () = ""
+                                               let r2 () = "" })
 
 module b256: field = big_field (make_field u64 { let limbs = 4i32
-                                                 let p = pstr("")
-                                                 let r2 = pstr("") })
+                                                 let p () = ""
+                                                 let r2 () = "" })
 
 module b8: field = big_field (make_field u8 { let limbs = 1i32
-                                              let p = pstr("")
-                                              let r2 = pstr("") })
+                                              let p () = ""
+                                              let r2 () = "" })
 
 module b8': field = big_field (make_field u8 { let limbs = 1i32
-                                               let p = pstr("251")
-                                               let r2 = pstr("25") })
+                                               let p () = "251"
+                                               let r2 () = "25" })
 module b16: field = big_field (make_field u8 { let limbs = 2i32
-                                               let p = pstr("")
-                                               let r2 = pstr("") })
-
-let bls12_381_modulus = pstr "52435875175126190479447740508185965837690552500527637822603658699938581184513"
-let r_squared_mod_p = pstr "3294906474794265442129797520630710739278575682199800681788903916070560242797"
+                                               let p () = ""
+                                               let r2 () = "" })
 
 module bls12_381: field = big_field (make_field u64 {
                                                   let limbs = 4i32
-                                                  let p = bls12_381_modulus
-                                                  let r2 = r_squared_mod_p })
+                                                  let p () = copy bls12_381_modulus
+                                                  let r2 () = copy r_squared_mod_p })
