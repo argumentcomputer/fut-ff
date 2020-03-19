@@ -437,32 +437,40 @@ module big_field (M: fieldtype): field = {
   let (a: t) + (b: t) = if p_is_small then add_cheap a b else add_expensive a b
 
   let square (x: t): t =
-    let (res: *double_t) = map (const M.zero) (iota DOUBLE_LIMBS) in
-    let res =
-      (loop (outer) = res for i < LIMBS do
-      let (inner, carry, _) =
-        (loop (inner, carry, j) = (outer, M.zero, i i32.+ 1) while j i32.< LIMBS do
-         let box = inner[i i32.+ j] in
-         let (sum, carry) = mac_with_carry x[i] x[j] (copy box) carry in
-         (inner with [i i32.+ j] = sum, carry, j i32.+ 1)) in
-      inner with [i i32.+ LIMBS] = carry) in
-    let box = res[i32.(LIMBS * 2 - 2)] in
-    let res = res with [i32.(LIMBS * 2 - 1)] = (copy box) M.>> (i32.(LIMBS - 1)) in
+    let _ = assert false "unimplemented" in
+    -- This implementation is failing with large enough values, example test case:
+    -- bls12_381.((from_string "12345678912345678912345678901") * (from_string "12345678912345678912345678901") == (square (from_string "12345678912345678912345678901")))
+    -- should return true, but returns false.
 
-    let (res, _) = loop (res, i) = (res, i32.(LIMBS * 2 - 2)) while (i i32.> 1) do
-                   let box = res[i] in
-                   let box2 = res[i i32.- 1] in
-                   let res = res with [i] = (copy box) M.<< 1 M.| ((copy box2) M.>> 1) in
-                   (res, i i32.+ 1) in
-    let (_, _, res) = loop (i, carry, res) = (0, M.zero, res) while i i32.< LIMBS do
-              let box = res[i i32.* 2] in
-              let (x, carry) = mac_with_carry x[i] x[i] (copy box) carry in
-              let box2 = res[i32.(i * 2 + 1)] in
-              let (y, carry) = add_with_carry (copy box2) carry in
-              let res = res with [i32.(i * 2)] = x in
-              let res = res with [i32.(i * 2 + 1)] = y in
-              (i i32.+ 1, carry, res) in
-    mont_reduce res
+    -- Long multiplication (Diagonal elements are skipped)
+    let (res: *double_t) = replicate DOUBLE_LIMBS M.zero in
+    let res =
+      loop res for i < i32.(LIMBS-1) do
+      let (res, carry, _) =
+        loop (res, carry, j) = (res, M.zero, i32.(i + 1)) while i32.(j < LIMBS) do
+         let (sum, carry) = mac_with_carry x[i] x[j] (copy res[i32.(i + j)]) carry
+         in (res with [i32.(i + j)] = sum, carry, i32.(j + 1))
+      in res with [i32.(i + LIMBS)] = carry in
+
+    --  Double the result
+    let res = res with [i32.(LIMBS * 2 - 1)] = (copy res[i32.(LIMBS * 2 - 2)]) M.>> i32.(M.num_bits - 1) in
+    let (res, _) =
+      loop (res, i) = (res, i32.(LIMBS * 2 - 2)) while i32.(i > 1) do
+      let res = res with [i] = M.((copy res[i] << 1) | ((copy res[i32.(i - 1)] >> i32.(M.num_bits - 1)))) in
+      (res, i32.(i - 1))
+    in let res = res with [1] = M.(copy res[1] << 1) in
+
+    --  Process diagonal elements
+    let (_, _, res) =
+      loop (i, carry, res) = (0, M.zero, res) while i32.(i < LIMBS) do
+      let (a, carry) = mac_with_carry x[i] x[i] (copy res[i32.(i * 2)]) carry in
+      let (b, carry) = add_with_carry (copy res[i32.(i * 2 + 1)]) carry in
+      (i i32.+ 1,
+       carry,
+       res with [i32.(i * 2)] = a
+           with [i32.(i * 2 + 1)] = b)
+
+    in mont_reduce res
 
   let double (_x: t): t = assert false (copy zero) -- TODO: implement
   let pow (_base: t) (_exp: i32): t = assert false (copy zero) -- TODO: implement
