@@ -40,6 +40,7 @@ module type fieldtype = {
   val from_u16: u16 -> t
   val from_u32: u32 -> t
   val from_u64: u64 -> t
+  val to_u64: t -> u64
   val mad_hi: t -> t -> t -> t
 
   val +: t -> t -> t
@@ -82,6 +83,7 @@ module fieldtype (T: integral) (P: field_params): fieldtype = {
   let from_u16 (n: u16): t = T.u16 n
   let from_u32 (n: u32): t = T.u32 n
   let from_u64 (n: u64): t = T.u64 n
+  let to_u64 (n: t): u64 = u64.i64 (T.to_i64 n)
   let mad_hi (a: t) (b: t) (c: t): t = T.mad_hi a b c
 
   let (a: t) + (b: t) = a T.+ b
@@ -167,6 +169,9 @@ module type field = {
 
   val from_string [n]: [n]u8 -> t
   val make: (() -> []s) -> t
+
+  val from_u64s [n]: [n]u64 -> t
+  val to_u64s: t -> [LIMBS]u64
 
   -- Debugging
   val double_in_field: double_t -> t -> bool
@@ -336,7 +341,7 @@ module big_field (M: fieldtype): field = {
   -- FIXME: assert valid digits
   let from_string [n] (str: [n]u8): t =
     let parse_digit (c: u8): t = from_u8 u8.(c - '0') in
-    loop acc = zero for c in str do
+    loop acc = copy zero for c in str do
       if c u8.== ' ' then
         acc else
         add (naive_mul acc (copy ten)) (parse_digit c)
@@ -483,6 +488,12 @@ module big_field (M: fieldtype): field = {
   let s_from_u64 (n: u64): s = M.from_u64 n
 
   let make (a: () -> []s): t = a () :> t
+
+  let from_u64s (limbs: []u64): t =
+    assert i32.((length limbs) == LIMBS) ((map M.from_u64 limbs) :> t)
+
+  let to_u64s (limbs: t): [LIMBS]u64 =
+    map M.to_u64 limbs
 }
 
 -- Non-prime fields don't work with montgomery representation. TODO: support them separately.
