@@ -168,6 +168,8 @@ module type field = {
   val from_string [n]: [n]u8 -> t
   val make: (() -> []s) -> t
 
+  val from_u64s [n]: [n]u64 -> t
+
   -- Debugging
   val double_in_field: double_t -> t -> bool
   val double_sub: double_t -> double_t -> double_t
@@ -483,6 +485,9 @@ module big_field (M: fieldtype): field = {
   let s_from_u64 (n: u64): s = M.from_u64 n
 
   let make (a: () -> []s): t = a () :> t
+
+  let from_u64s (limbs: []u64): t =
+    assert i32.((length limbs) == LIMBS) ((map M.from_u64 limbs) :> t)
 }
 
 -- Non-prime fields don't work with montgomery representation. TODO: support them separately.
