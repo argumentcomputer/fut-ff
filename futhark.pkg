@@ -1,5 +1,5 @@
 package github.com/porcuquine/fut-ff
 
 require {
-  github.com/athas/vector 0.5.0 #0ddd717c0c2a66c5b4dcdf69f48ba2b6ab6a8fb1
+  github.com/athas/vector 0.6.0 #36473256e4834ac9ff31243cceb439c1f79bf1a4
 }

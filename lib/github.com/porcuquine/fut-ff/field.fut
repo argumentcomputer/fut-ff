@@ -236,58 +236,40 @@ module big_field (M: fieldtype): field = {
 
   let bool_t (cond: bool): s = if cond then M.one else M.zero
 
-  let (a: t) >= (b: t) : bool =
-    let res = loop (acc, i) = (true, LIMBS - 1) while acc && (i >= 0) do
-                if M.((LVec.get i a) > (LVec.get i b)) then (true, -1) else
-                  (M.((LVec.get i a) == (LVec.get i b)), i-1) in
-    res.0
+  let (a: t) < (b: t) : bool =
+    let op (a', b') acc = acc || M.(a' < b')
+    in LVec.foldr op false (LVec.zip a b)
 
-  let (a: t) > (b: t) : bool =
-      let res = loop (acc, i) = (true, LIMBS - 1) while acc && (i i32.>= 0) do
-                  if M.((LVec.get i a) == (LVec.get i b)) then (true, i - 1) else
-                    (M.((LVec.get i a) > (LVec.get i b)), -1) in
-    res.0
-
-  let (a: t) <= (b: t) : bool = b > a
-
-  let (a: t) < (b: t) : bool = b >= a
+  let (a: t) >= (b: t) : bool = !(a < b)
+  let (a: t) > (b: t) : bool =  b < a
+  let (a: t) <= (b: t) : bool = !(b < a)
 
   let add (a: t) (b: t): t =
-    let r: *t = copy zero in
-    let carry = M.zero in
-    let (_, r) = loop (carry, r) for i < LIMBS do
-      let old = LVec.get i a in
-      let tmp = M.((LVec.get i a) + (LVec.get i b) + carry) in
-      let carry = if M.(carry > zero) then
-                    bool_t M.(old > tmp)
-                  else
-                    bool_t M.(old > tmp) in
---      (carry, r with [i] = tmp) in
-      (carry, LVec.set i tmp r) in
-    r
+  let r: *t = copy zero in
+  let carry = M.zero in
+  let op (carry, r) (i, (a', b')) =
+  let new = M.(a' + b' + carry) in
+  let carry = bool_t M.(a' > new) in
+         (carry, LVec.set i new r)
+  let (_, r) = LVec.foldl op (carry, r) (LVec.zip LVec.iota (LVec.zip a b))
+  in r
 
-  let sub (a: t) (b: t) : t =
-    let r: t = copy zero in
-    let borrow = M.zero in
-    let (_, r) = loop (borrow, r) for i < LIMBS do
-      let old = LVec.get i a in
-      let tmp = M.(LVec.get i a - (LVec.get i b) + borrow) in
-      let borrow = if M.(borrow > zero) then
-                     bool_t M.(old <= tmp)
-                   else
-                     bool_t M.(old < tmp) in
-      (borrow, LVec.set i tmp r) in
-    r
+let sub (a: t) (b: t) : t =
+    let op (borrow, r) (i, (a', b')) =
+      let new = M.(a' - (b' + borrow)) in
+      let borrow = bool_t M.(if borrow > zero then a' <= new else a' < new) in
+      (borrow, LVec.set i new r) in
+    let (_, r) = LVec.foldl op (M.zero, zero) (LVec.zip LVec.iota (LVec.zip a b))
+    in r
 
-  --  TODO: try to make this generic over size.
-  let double_sub (a: double_t) (b: double_t) : double_t =
-    let r: *double_t = copy double_zero in
-    let (_, r) = loop (borrow, r) = (M.zero, r) for i < DOUBLE_LIMBS do
-      let old = LVec2.get i a in
-      let tmp = M.(LVec2.get i a - (LVec2.get i b + borrow)) in
-      let borrow = bool_t (if M.(borrow > zero) then M.(old <= tmp) else M.(old < tmp)) in
-      (borrow, LVec2.set i tmp r) in
-    r
+   --  TODO: try to make this generic over size.
+   let double_sub (a: double_t) (b: double_t) : double_t =
+    let op (borrow, r) (i, (a', b')) =
+      let new = M.(a' - (b' + borrow)) in
+      let borrow = bool_t M.(if borrow > zero then a' <= new else a' < new) in
+      (borrow, LVec2.set i new r) in
+    let (_, r) = LVec2.foldl op (M.zero, double_zero) (LVec2.zip LVec2.iota (LVec2.zip a b))
+    in r
 
   let mac_with_carry (a: s) (b: s) (c: s) (d: s): (s, s) =
     let lo = M.(a * b + c) in
@@ -316,13 +298,13 @@ module big_field (M: fieldtype): field = {
     let c = hi in
     (lo, c)
 
-    -- Is double-width a in the field?
-    let double_in_field (a: double_t) (f: t): bool =
+  let double_in_field (a: double_t) (f: t): bool =
       all (\i -> M.(LVec2.get i32.(i + limbs) a == zero)) (iota LIMBS) &&
+      --(f == zero) || -- Why isn't this equivalent to the next line?
       if f == zero then true else
       let (acc, _) = loop (acc, i) = (true, LIMBS - 1) while acc && (i i32.>= 0) do
-                  if M.(LVec2.get i a < (LVec.get i f)) then (true, -1) else
-                    (M.(LVec2.get i a == (LVec.get i f)), i - 1) in
+                       if M.(LVec2.get i a < (LVec.get i f)) then (true, -1) else
+                         (M.(LVec2.get i a == (LVec.get i f)), i - 1) in
       acc
 
   -- So we can read the initial FIELD_P value from a string.
@@ -333,16 +315,14 @@ module big_field (M: fieldtype): field = {
     LVec.from_array ((map (\i -> LVec2.get i in_field) (iota LIMBS)) :> [LVec.length]M.t)
 
   let big_mul (a: t) (b: t): LVec2.vector M.t = --[DOUBLE_LIMBS]M.t =
-    let (res: double_t) = LVec2.replicate M.zero in
-    let (outer, _) =
-      loop (outer, i) = (res, 0) while i i32.< LIMBS do
+    let outer_op outer (i, a') =
       let (inner, carry) =
-        (loop (inner, carry) = (outer, M.zero) for j < LIMBS do
-         let box = LVec2.get (i+j) inner in
-         let (sum, carry) = mac_with_carry (LVec.get i a) (LVec.get j b) (copy box) carry in
-         (LVec2.set (i+j) sum inner, carry)) in
-      (LVec2.set (i+LIMBS) carry inner, i+1) in
-    outer
+        let op (inner, carry) (j, b') =
+          let (sum, carry) = mac_with_carry a' b' (LVec2.get (i+j) inner) carry
+          in (LVec2.set (i+j) sum inner, carry)
+        in LVec.foldl op (outer, M.zero) (LVec.zip LVec.iota b)
+      in LVec2.set (i+LIMBS) carry inner
+    in LVec.foldl outer_op (LVec2.replicate M.zero) (LVec.zip LVec.iota a)
 
   let naive_mul  (a: t) (b: t) : t =
     naive_reduce (big_mul a b)
@@ -395,21 +375,18 @@ module big_field (M: fieldtype): field = {
   let mont_reduce (limbs: double_t): t =
     let (FIELD_P, FIELD_INV) = (copy (FIELD_P, FIELD_INV)) in
     let (lmbs, _) =
-      loop (lmbs, carry2) = (limbs, M.zero) for i < LIMBS do
-      let u = M.(FIELD_INV * LVec2.get i lmbs) in
-      let carry = M.zero in
-      let (lmbs, carry) =
-        loop (lmbs, carry) for j < LIMBS do
-        let box = LVec2.get (i+j) lmbs in
-        let (x, carry) = mac_with_carry u (LVec.get j FIELD_P) (copy box) carry in
-        (LVec2.set (i+j) x lmbs, carry) in
-      let box = LVec2.get (i+LIMBS) lmbs in
-      let (x, carry2) = add2_with_carry (copy box) carry carry2 in
-      (LVec2.set (i+LIMBS) x lmbs, carry2) in 
-    let result: t = LVec.map (\i -> LVec2.get (i+LIMBS) lmbs) LVec.iota in
-    if result >= FIELD_P then
-      sub result FIELD_P
-    else result
+      let outer_op (lmbs, carry2) i =
+        let u = M.(FIELD_INV * (LVec2.get i lmbs)) in
+        let (lmbs, carry) =
+          let op (lmbs, carry) (j, fp) =
+            let (x, carry) = mac_with_carry u fp (LVec2.get (i+j) lmbs) carry in
+            (LVec2.set (i+j) x lmbs, carry)
+          in LVec.foldl op (lmbs, M.zero) (LVec.zip LVec.iota FIELD_P) in
+        let (x, carry2) = add2_with_carry (LVec2.get (i+LIMBS) lmbs) carry carry2 in
+        (LVec2.set (i+LIMBS) x lmbs, carry2) in
+      LVec.foldl outer_op (limbs, M.zero) LVec.iota
+    in let result = LVec.map (\i -> LVec2.get (i+LIMBS) lmbs) LVec.iota
+       in if result >= FIELD_P then sub result FIELD_P else result
 
   let final_reduce (v: t): t =
     let double = LVec2.map (\i -> if i i32.< LIMBS then LVec.get i v else M.zero) LVec2.iota in
