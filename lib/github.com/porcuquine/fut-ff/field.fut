@@ -164,6 +164,13 @@ module type field = {
   val from_u32: u32 -> t
   val from_u64: u64 -> t
 
+  -- These mont_from_ functions are like their corresponding from_ functions
+  -- but also convert the result to Montgomery representation.
+  val mont_from_u8: u8 -> t
+  val mont_from_u16: u16 -> t
+  val mont_from_u32: u32 -> t
+  val mont_from_u64: u64 -> t
+
   val s_from_u8: u8 -> s
   val s_from_u16: u16 -> s
   val s_from_u32: u32 -> s
@@ -185,6 +192,9 @@ module type field = {
 
   val from_u64s [n]: [n]u64 -> t
   val to_u64s: t -> [LIMBS]u64
+
+  val mont_from_u64s [n]: [n]u64 -> t
+  val mont_to_u64s: t -> [LIMBS]u64
 
   -- Debugging
   val double_in_field: double_t -> t -> bool
@@ -483,7 +493,19 @@ let sub (a: t) (b: t) : t =
     assert i32.((length limbs) == LIMBS) (LVec.map M.from_u64 (LVec.from_array (limbs :> [LVec.length]u64)) :> t)
 
   let to_u64s (limbs: t): [LIMBS]u64 =
-    (map M.to_u64 (LVec.to_array limbs)) :> [LIMBS]u64
+    LVec.to_array (LVec.map M.to_u64 limbs) :> [LIMBS]u64
+
+let mont_from_u8 (n: u8): t = to_mont (fill (M.from_u8 n) 1)
+  let mont_from_u16 (n: u16): t = to_mont (fill (M.from_u16 n) 1)
+  let mont_from_u32 (n: u32): t = to_mont (fill (M.from_u32 n) 1)
+  let mont_from_u64 (n: u64): t = to_mont (fill (M.from_u64 n) 1)
+
+let mont_from_u64s [n] (limbs: [n]u64): t =
+  assert i32.((length limbs) == LIMBS) (to_mont (LVec.map M.from_u64 (LVec.from_array (limbs :> [LVec.length]u64)) :> t))
+
+  let mont_to_u64s (limbs: t): [LIMBS]u64 =
+    LVec.to_array (LVec.map M.to_u64 (final_reduce limbs)) :> [LIMBS]u64
+
 }
 
 -- Non-prime fields don't work with montgomery representation. TODO: support them separately.
