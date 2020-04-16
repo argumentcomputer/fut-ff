@@ -247,8 +247,13 @@ module big_field (M: fieldtype): field = {
   let bool_t (cond: bool): s = if cond then M.one else M.zero
 
   let (a: t) < (b: t) : bool =
-    let op (a', b') acc = acc || M.(a' < b')
-    in LVec.foldr op false (LVec.zip a b)
+    let op (a', b') (done, res) = if done then (true, res) else
+                                  if M.(a' < b') then (true, true) else
+                                  if M.(a' == b') then (false, false) else
+                                    (true, false)
+    in
+    let (_, res) = LVec.foldr op (false, false) (LVec.zip a b)
+    in res
 
   let (a: t) >= (b: t) : bool = !(a < b)
   let (a: t) > (b: t) : bool =  b < a
