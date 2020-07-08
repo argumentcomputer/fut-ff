@@ -12,6 +12,8 @@ Poseidon hashing as provided by [neptune](https://github.com/filecoin-project/ne
 Initial design and algorithm details were partially based on (the source which has now become)
 [ff-cl-gen](https://github.com/filecoin-project/ff-cl-gen).
 
+`fut-ff` was written by [porcuquine](https://github.com/porcuquine).
+
 ## License
 
 The Filecoin Project is dual-licensed under Apache 2.0 and MIT terms:
