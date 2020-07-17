@@ -1,4 +1,4 @@
-SRC=./lib/github.com/porcuquine/fut-ff
+SRC=./lib/github.com/filecoin-project/fut-ff
 
 test: $(SRC)/*.fut
 	futhark test $(SRC)/*.fut

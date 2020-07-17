@@ -1,4 +1,4 @@
-package github.com/porcuquine/fut-ff
+package github.com/filecoin-project/fut-ff
 
 require {
   github.com/athas/vector 0.6.0 #36473256e4834ac9ff31243cceb439c1f79bf1a4
