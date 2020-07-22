@@ -1,0 +1,28 @@
+version: 2.1
+
+executors:
+  default:
+    machine:
+      image: ubuntu-1604:201903-01
+    working_directory: ~/
+
+jobs:
+  test:
+    machine:
+      image: ubuntu-1604:201903-01
+
+    steps:
+      - checkout
+      - run: sudo apt install xz-utils
+      - run: mkdir -p futhark
+      - run: cd futhark &&
+             curl https://futhark-lang.org/releases/futhark-0.16.2-linux-x86_64.tar.xz --output futhark-0.16.2-linux-x86_64.tar.xz &&
+             tar --xz -xf futhark-0.16.2-linux-x86_64.tar.xz
+      - run: echo "export PATH=\"$(pwd)/futhark/futhark-0.16.2-linux-x86_64/bin:$PATH\"" >> $BASH_ENV
+      - run: source $BASH_ENV
+      - run: make test
+
+workflows:
+  test_all:
+    jobs:
+      - test
